@@ -223,6 +223,14 @@ class QMixTorchPolicy(Policy):
         if config["mixer"] is None:
             self.mixer = None
             self.target_mixer = None
+        elif isinstance(config["mixer"], type):
+            mixer_cls = config["mixer"]
+            self.mixer = mixer_cls(self.n_agents, self.env_global_state_shape,
+                                   config["mixing_embed_dim"], config).to(
+                                       self.device)
+            self.target_mixer = mixer_cls(
+                self.n_agents, self.env_global_state_shape,
+                config["mixing_embed_dim"], config).to(self.device)
         elif config["mixer"] == "qmix":
             self.mixer = QMixer(self.n_agents, self.env_global_state_shape,
                                 config["mixing_embed_dim"]).to(self.device)
