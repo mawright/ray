@@ -85,14 +85,15 @@ class QMixLoss(nn.Module):
                                  state, next_state))
 
         # Calculate estimated Q-Values
-        mac_out = _unroll_mac(self.model, obs)
+        mac_out, h_out = _unroll_mac(self.model, obs, True)
 
         # Pick the Q-Values for the actions taken -> [B * n_agents, T]
         chosen_action_qvals = th.gather(
             mac_out, dim=3, index=actions.unsqueeze(3)).squeeze(3)
 
         # Calculate the Q-Values necessary for the target
-        target_mac_out = _unroll_mac(self.target_model, next_obs)
+        target_mac_out, target_h_out = _unroll_mac(
+            self.target_model, next_obs, True)
 
         # Mask out unavailable actions for the t+1 step
         ignore_action_tp1 = (next_action_mask == 0) & (mask == 1).unsqueeze(-1)
@@ -130,8 +131,8 @@ class QMixLoss(nn.Module):
 
         # Mix
         if self.mixer is not None:
-            chosen_action_qvals = self.mixer(chosen_action_qvals, state)
-            target_max_qvals = self.target_mixer(target_max_qvals, next_state)
+            chosen_action_qvals = self.mixer(chosen_action_qvals, state, h_out)
+            target_max_qvals = self.target_mixer(target_max_qvals, next_state, target_h_out)
 
         # Calculate 1-step Q-Learning targets
         targets = rewards + self.gamma * (1 - terminated) * target_max_qvals
@@ -540,20 +541,26 @@ def _mac(model, obs, h):
         [B, n_agents, -1]), [s.reshape([B, n_agents, -1]) for s in h_flat]
 
 
-def _unroll_mac(model, obs):
+def _unroll_mac(model, obs, return_rnn_state=False):
     """Computes the estimated Q values for an entire trajectory batch"""
     if not isinstance(obs, dict):
         obs = {"obs": obs}
     B, n_agents = obs["obs"].size(0), obs["obs"].size(2)
 
     mac_out = []
+    h_out = []
     h = [s.expand([B, n_agents, -1]) for s in model.get_initial_state()]
     for obs_t in _iter_dict_by_timestep(obs):
         q, h = _mac(model, obs_t, h)
         mac_out.append(q)
+        h_out.append(th.cat(h, -1))
     mac_out = th.stack(mac_out, dim=1)  # Concat over time
 
-    return mac_out
+    if not return_rnn_state:
+        return mac_out
+
+    h_out = th.stack(h_out, dim=1)
+    return mac_out, h_out
 
 
 def _iter_dict_by_timestep(obs_dict):

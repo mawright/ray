@@ -12,7 +12,7 @@ class VDNMixer(nn.Module):
     def __init__(self):
         super(VDNMixer, self).__init__()
 
-    def forward(self, agent_qs, batch):
+    def forward(self, agent_qs, batch, rnn_state=None):
         return th.sum(agent_qs, dim=2, keepdim=True)
 
 
@@ -36,7 +36,7 @@ class QMixer(nn.Module):
             nn.Linear(self.state_dim, self.embed_dim), nn.ReLU(),
             nn.Linear(self.embed_dim, 1))
 
-    def forward(self, agent_qs, states):
+    def forward(self, agent_qs, states, rnn_state=None):
         """Forward pass for the mixer.
 
         Arguments:
