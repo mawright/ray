@@ -66,6 +66,10 @@ DEFAULT_CONFIG = with_common_config({
     # if async_updates is set, then each worker returns gradients for a
     # batch of this size.
     "train_batch_size": 32,
+    # Number of training batches of size `train_batch_size` to draw from the
+    # replay buffer and train on per sample call. Useful if desired train
+    # batch size does not fit into GPU memory.
+    "train_batches_per_sample_batch": 1,
 
     # === Parallelism ===
     # Number of workers for collecting samples with. This only makes sense
@@ -94,7 +98,8 @@ def make_sync_batch_optimizer(workers, config):
         workers,
         learning_starts=config["learning_starts"],
         buffer_size=config["buffer_size"],
-        train_batch_size=config["train_batch_size"])
+        train_batch_size=config["train_batch_size"],
+        train_batches_per_sample_batch=config["train_batches_per_sample_batch"])
 
 
 QMixTrainer = GenericOffPolicyTrainer.with_updates(

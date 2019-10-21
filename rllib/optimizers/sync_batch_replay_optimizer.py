@@ -3,12 +3,14 @@ from __future__ import division
 from __future__ import print_function
 
 import random
+from collections import defaultdict
 
 import ray
 from ray.rllib.evaluation.metrics import get_learner_stats
 from ray.rllib.optimizers.policy_optimizer import PolicyOptimizer
 from ray.rllib.policy.sample_batch import SampleBatch, DEFAULT_POLICY_ID, \
     MultiAgentBatch
+from ray.rllib.optimizers.multi_gpu_optimizer import _averaged
 from ray.rllib.utils.annotations import override
 from ray.rllib.utils.timer import TimerStat
 from ray.rllib.utils.memory import ray_get_and_free
@@ -23,7 +25,8 @@ class SyncBatchReplayOptimizer(PolicyOptimizer):
                  workers,
                  learning_starts=1000,
                  buffer_size=10000,
-                 train_batch_size=32):
+                 train_batch_size=32,
+                 train_batches_per_sample_batch=1):
         """Initialize a batch replay optimizer.
 
         Arguments:
@@ -38,6 +41,7 @@ class SyncBatchReplayOptimizer(PolicyOptimizer):
         self.replay_starts = learning_starts
         self.max_buffer_size = buffer_size
         self.train_batch_size = train_batch_size
+        self.train_batches_per_sample_batch = train_batches_per_sample_batch
         assert self.max_buffer_size >= self.replay_starts
 
         # List of buffered sample batches
@@ -108,14 +112,19 @@ class SyncBatchReplayOptimizer(PolicyOptimizer):
             })
 
     def _optimize(self):
-        samples = [random.choice(self.replay_buffer)]
-        while sum(s.count for s in samples) < self.train_batch_size:
-            samples.append(random.choice(self.replay_buffer))
-        samples = SampleBatch.concat_samples(samples)
+        stats_dict = defaultdict(lambda: defaultdict(list))
         with self.grad_timer:
-            info_dict = self.workers.local_worker().learn_on_batch(samples)
-            for policy_id, info in info_dict.items():
-                self.learner_stats[policy_id] = get_learner_stats(info)
-            self.grad_timer.push_units_processed(samples.count)
-        self.num_steps_trained += samples.count
-        return info_dict
+            for _ in range(self.train_batches_per_sample_batch):
+                samples = [random.choice(self.replay_buffer)]
+                while sum(s.count for s in samples) < self.train_batch_size:
+                    samples.append(random.choice(self.replay_buffer))
+                samples = SampleBatch.concat_samples(samples)
+                info_dict = self.workers.local_worker().learn_on_batch(samples)
+                for policy_id, info in info_dict.items():
+                    for k, v in get_learner_stats(info).items():
+                        stats_dict[policy_id][k].append(v)
+                self.num_steps_trained += samples.count
+                self.grad_timer.push_units_processed(samples.count)
+        for policy_id, info in stats_dict.items():
+            self.learner_stats[policy_id] = _averaged(info)
+        return self.learner_stats
